@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decrypt, encryptField, deriveKey, genSalt } from "../src/decrypt.js";
+import { decrypt, encryptField, deriveKey, genSalt } from "../../src/crypto/decrypt.js";
 
 const CASES = [
   { encType: 0, userId: 0 },
