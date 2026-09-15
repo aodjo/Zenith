@@ -51,6 +51,23 @@ test("emits only messages newer than the seed and advances the cursor", async ()
   assert.deepEqual(seen, [6, 7, 8]);
 });
 
+test("textOnly emits plain text and skips feed/system rows", async () => {
+  const source = new FakeSource();
+  source.all = [];
+  const seen: number[] = [];
+  const observer = new ChatObserver(source, { textOnly: true });
+  observer.onMessage((m) => seen.push(m.logId));
+  await observer.start();
+  source.all.push({ ...msg(1, "a"), type: 0 }, msg(2, "a"), { ...msg(3, "a"), type: 0 });
+  const emitted = await observer.poll();
+  observer.stop();
+  assert.deepEqual(
+    emitted.map((m) => m.logId),
+    [2],
+  );
+  assert.deepEqual(seen, [2]);
+});
+
 test("chatId filter advances the cursor past filtered rows", async () => {
   const source = new FakeSource();
   source.all = [];

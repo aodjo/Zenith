@@ -6,6 +6,9 @@ const DEFAULT_INTERVAL_MS = 1500;
 /** Default maximum messages fetched per poll. */
 const DEFAULT_BATCH = 200;
 
+/** KakaoTalk message type code for a plain text message (feed/system messages are 0). */
+export const TEXT_MESSAGE_TYPE = 1;
+
 /** A callback invoked with each newly observed message. */
 export type MessageListener = (message: Message) => void;
 
@@ -19,6 +22,8 @@ export interface ObserverOptions {
   batchSize?: number;
   /** If set, only messages in this chat room are emitted. */
   chatId?: string;
+  /** If true, emit only plain text messages ({@link TEXT_MESSAGE_TYPE}), skipping feed/system entries. */
+  textOnly?: boolean;
 }
 
 /**
@@ -39,6 +44,7 @@ export class ChatObserver {
   private readonly intervalMs: number;
   private readonly batchSize: number;
   private readonly chatId: string | undefined;
+  private readonly textOnly: boolean;
   private readonly listeners = new Set<MessageListener>();
   private lastLogId = 0;
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -58,6 +64,7 @@ export class ChatObserver {
     this.intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
     this.batchSize = options.batchSize ?? DEFAULT_BATCH;
     this.chatId = options.chatId;
+    this.textOnly = options.textOnly ?? false;
   }
 
   /**
@@ -131,6 +138,7 @@ export class ChatObserver {
       for (const message of fresh) {
         if (message.logId > this.lastLogId) this.lastLogId = message.logId;
         if (this.chatId !== undefined && message.chatId !== this.chatId) continue;
+        if (this.textOnly && message.type !== TEXT_MESSAGE_TYPE) continue;
         emitted.push(message);
         for (const listener of this.listeners) listener(message);
       }
