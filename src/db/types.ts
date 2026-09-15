@@ -42,6 +42,8 @@ export interface Room {
   memberIds: string[];
   /** Total participants including the bot ({@link Room.memberIds} length + 1). */
   memberCount: number;
+  /** The room's participant limit from `open_link.member_limit`, if resolved. */
+  memberLimit?: number;
 }
 
 /**

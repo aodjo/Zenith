@@ -245,12 +245,12 @@ export class KakaoDb {
     )) {
       if (chatId && linkId) linkByChat.set(chatId, linkId);
     }
-    const links = new Map<string, { name: string; url: string; ownerId: string }>();
-    for (const [id = "", name = "", url = "", ownerId = ""] of await this.rows(
+    const links = new Map<string, { name: string; url: string; ownerId: string; memberLimit: string }>();
+    for (const [id = "", name = "", url = "", ownerId = "", memberLimit = ""] of await this.rows(
       DB_AUX,
-      `SELECT id,name,url,user_id FROM open_link;`,
+      `SELECT id,name,url,user_id,member_limit FROM open_link;`,
     )) {
-      links.set(id, { name, url, ownerId });
+      links.set(id, { name, url, ownerId, memberLimit });
     }
     const linkByCode = new Map<string, string>();
     for (const [id, info] of links) {
@@ -275,6 +275,8 @@ export class KakaoDb {
       const resolvedCode = code ?? (link ? codeFromUrl(link.url) : undefined);
       if (resolvedCode) room.code = resolvedCode;
       if (link?.ownerId) room.ownerId = link.ownerId;
+      const limit = link ? Number(link.memberLimit) : NaN;
+      if (Number.isFinite(limit) && limit > 0) room.memberLimit = limit;
       return room;
     });
   }
