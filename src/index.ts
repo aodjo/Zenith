@@ -2,4 +2,7 @@ export * from "./crypto/index.js";
 export * from "./device/index.js";
 export * from "./ui/index.js";
 export * from "./openchat/index.js";
+export * from "./db/index.js";
+export * from "./observer/index.js";
+export * from "./send/index.js";
 export * from "./util/index.js";
