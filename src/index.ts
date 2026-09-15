@@ -1,3 +1,4 @@
+export * from "./bot/index.js";
 export * from "./zenith.js";
 export * from "./crypto/index.js";
 export * from "./device/index.js";
