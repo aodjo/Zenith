@@ -123,6 +123,31 @@ export class Screen {
   }
 
   /**
+   * Scrolls the screen upward until a node matching the selector appears.
+   *
+   * Some targets (e.g. a "Leave chatroom" button at the end of a settings list) start
+   * below the fold. This swipes up repeatedly, re-reading the hierarchy after each swipe,
+   * and returns the node once visible. Swipe geometry assumes a roughly 1080x1920 screen.
+   *
+   * @param {Selector} selector - The element to reveal.
+   * @param {number} [maxSwipes=6] - Maximum number of upward swipes to attempt.
+   * @returns {Promise<UiNode>} The revealed node.
+   * @throws {Error} If the element is not found after `maxSwipes` swipes.
+   *
+   * @example
+   * const leave = await screen.scrollTo({ text: "Leave chatroom" });
+   */
+  async scrollTo(selector: Selector, maxSwipes = 6): Promise<UiNode> {
+    for (let attempt = 0; attempt <= maxSwipes; attempt++) {
+      const node = await this.find(selector);
+      if (node) return node;
+      await this.device.swipe(540, 1400, 540, 600, 300);
+      await sleep(500);
+    }
+    throw new Error(`scrollTo did not reveal ${JSON.stringify(selector)} after ${maxSwipes} swipes`);
+  }
+
+  /**
    * Waits for a node, then taps the center of its current bounds.
    *
    * @param {Selector} selector - The element to tap.

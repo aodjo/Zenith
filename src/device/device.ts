@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { Mutex } from "../util/mutex.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -35,6 +36,7 @@ export interface DeviceOptions {
 export class Device {
   private readonly serial: string;
   private readonly adbPath: string;
+  private readonly lock = new Mutex();
 
   /**
    * Creates a handle to one adb-addressable device.
@@ -48,6 +50,29 @@ export class Device {
   constructor(serial: string, options: DeviceOptions = {}) {
     this.serial = serial;
     this.adbPath = options.adbPath ?? DEFAULT_ADB;
+  }
+
+  /**
+   * Runs a UI operation with exclusive access to this device.
+   *
+   * All multi-step screen automation (joining, leaving, sending) must go through here.
+   * Because Zenith drives one shared screen by injecting taps, concurrent operations
+   * would interleave and corrupt each other; this serializes them into a FIFO queue so
+   * a second request waits for the first to finish rather than touching the screen
+   * mid-operation.
+   *
+   * @template T
+   * @param {() => Promise<T>} fn - The operation to run while holding the device lock.
+   * @returns {Promise<T>} Resolves or rejects with `fn`'s outcome.
+   *
+   * @example
+   * await device.exclusive(async () => {
+   *   await device.tap(100, 200);
+   *   await device.tap(300, 400);
+   * });
+   */
+  async exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    return this.lock.runExclusive(fn);
   }
 
   /**
