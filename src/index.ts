@@ -4,5 +4,6 @@ export * from "./ui/index.js";
 export * from "./openchat/index.js";
 export * from "./db/index.js";
 export * from "./observer/index.js";
+export * from "./events/index.js";
 export * from "./send/index.js";
 export * from "./util/index.js";
