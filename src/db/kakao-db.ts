@@ -27,6 +27,59 @@ const DEFAULT_MESSAGE_LIMIT = 30;
 /** Default page size for {@link KakaoDb.messagesSince}. */
 const DEFAULT_SINCE_LIMIT = 200;
 
+/** The `chat_rooms.type` codes that denote an open chat: `OM` (group) and `OD` (1:1). */
+export const OPEN_CHAT_TYPES: readonly string[] = ["OM", "OD"];
+
+/**
+ * Reports whether a `chat_rooms.type` code denotes an open chat.
+ *
+ * Open chats use `OM`/`OD`; regular chats use `DirectChat`, `MultiChat`, `PlusChat`, etc.
+ * Open-chat automation (join/leave/send by link) only applies to the former.
+ *
+ * @param {string} type - A raw `chat_rooms.type` value.
+ * @returns {boolean} True if the type is an open chat type.
+ *
+ * @example
+ * isOpenChatType("OM"); // true
+ * isOpenChatType("DirectChat"); // false
+ */
+export function isOpenChatType(type: string): boolean {
+  return OPEN_CHAT_TYPES.includes(type);
+}
+
+/**
+ * Thrown when an operation targets a room that is not an open chat.
+ *
+ * Zenith's room operations drive KakaoTalk's open-chat UI, so a regular chat (a direct
+ * message, a normal group, or a channel) must be rejected rather than acted on.
+ *
+ * @example
+ * try { await zenith.leave(regularChatId); }
+ * catch (e) { const notOpen = e instanceof NotOpenChatError; }
+ */
+export class NotOpenChatError extends Error {
+  /** The chat room id that was rejected. */
+  readonly chatId: string;
+  /** The room's `chat_rooms.type`, when known. */
+  readonly type: string | undefined;
+
+  /**
+   * Builds the error from the offending chat id and its type.
+   *
+   * @param {string} chatId - The chat room id.
+   * @param {string} [type] - The room's `chat_rooms.type`, if known.
+   *
+   * @example
+   * throw new NotOpenChatError("455007773985318", "DirectChat");
+   */
+  constructor(chatId: string, type?: string) {
+    super(`Chat ${chatId} is not an open chat${type ? ` (type ${type})` : ""}`);
+    this.name = "NotOpenChatError";
+    this.chatId = chatId;
+    this.type = type;
+  }
+}
+
 /**
  * Constructor options for {@link KakaoDb}.
  */
@@ -268,6 +321,38 @@ export class KakaoDb {
       `SELECT active_member_ids FROM chat_rooms WHERE id=${id};`,
     );
     return parseIdArray(rows[0]?.[0] ?? "[]").length + 1;
+  }
+
+  /**
+   * Returns a room's raw `chat_rooms.type` code, or undefined if the room is unknown.
+   *
+   * Unlike {@link KakaoDb.listJoinedRooms}, this does not filter to open chats, so it can
+   * classify any room the account is in (including regular chats).
+   *
+   * @param {string | number} chatId - The chat room id.
+   * @returns {Promise<string | undefined>} The type code (e.g. `"OM"`, `"DirectChat"`), or undefined.
+   *
+   * @example
+   * const type = await db.roomType("455007773985318"); // "DirectChat"
+   */
+  async roomType(chatId: string | number): Promise<string | undefined> {
+    const id = this.assertId(chatId);
+    const rows = await this.rows(DB_MAIN, `SELECT type FROM chat_rooms WHERE id=${id};`);
+    return rows[0]?.[0];
+  }
+
+  /**
+   * Reports whether a room is an open chat (type `OM` or `OD`).
+   *
+   * @param {string | number} chatId - The chat room id.
+   * @returns {Promise<boolean>} True if the room exists and is an open chat.
+   *
+   * @example
+   * if (!(await db.isOpenChat(chatId))) throw new Error("not an open chat");
+   */
+  async isOpenChat(chatId: string | number): Promise<boolean> {
+    const type = await this.roomType(chatId);
+    return type !== undefined && isOpenChatType(type);
   }
 
   /**

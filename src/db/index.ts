@@ -1,4 +1,10 @@
-export { KakaoDb, type KakaoDbOptions } from "./kakao-db.js";
+export {
+  KakaoDb,
+  type KakaoDbOptions,
+  OPEN_CHAT_TYPES,
+  isOpenChatType,
+  NotOpenChatError,
+} from "./kakao-db.js";
 export {
   type OpenProfile,
   type Room,
