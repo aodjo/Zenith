@@ -35,6 +35,31 @@ const LEAVE_BUTTON_TEXT = "Leave chatroom";
 /** Text of the confirm button in the leave dialog. */
 const LEAVE_CONFIRM_TEXT = "Leave";
 
+/** Title text of the passcode dialog shown when a room requires a chatroom code. */
+const PASSCODE_TITLE = "Chatroom Code";
+
+/** resource-id of the passcode input field in the passcode dialog. */
+const PASSCODE_FIELD_ID = "edit_text";
+
+/** Text of the passcode dialog's confirm button. */
+const PASSCODE_DONE_TEXT = "Done";
+
+/** Time to wait for the profile sheet after a passcode before treating it as rejected. */
+const PASSCODE_RESULT_MS = 8000;
+
+/**
+ * Pauses for a number of milliseconds.
+ *
+ * @param {number} ms - How long to sleep.
+ * @returns {Promise<void>} Resolves after the delay.
+ *
+ * @example
+ * await sleep(400);
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Thrown when the profile chosen for a join is not offered by the room.
  *
@@ -74,6 +99,58 @@ export class ProfileUnavailableError extends Error {
 }
 
 /**
+ * Thrown when a room requires a passcode but none was provided.
+ *
+ * @example
+ * try { await openChat.join({ link, profile }); }
+ * catch (e) { const needsCode = e instanceof PasscodeRequiredError; }
+ */
+export class PasscodeRequiredError extends Error {
+  /** The open chat link that requires a passcode. */
+  readonly link: string;
+
+  /**
+   * Builds the error from the link that demanded a passcode.
+   *
+   * @param {string} link - The open chat link.
+   *
+   * @example
+   * throw new PasscodeRequiredError("https://open.kakao.com/o/xxxx");
+   */
+  constructor(link: string) {
+    super(`Open chat ${link} requires a passcode; pass options.passcode`);
+    this.name = "PasscodeRequiredError";
+    this.link = link;
+  }
+}
+
+/**
+ * Thrown when the supplied passcode is rejected by the room.
+ *
+ * @example
+ * try { await openChat.join({ link, profile, passcode: "0000" }); }
+ * catch (e) { const wrong = e instanceof PasscodeIncorrectError; }
+ */
+export class PasscodeIncorrectError extends Error {
+  /** The open chat link whose passcode was rejected. */
+  readonly link: string;
+
+  /**
+   * Builds the error from the link whose passcode was wrong.
+   *
+   * @param {string} link - The open chat link.
+   *
+   * @example
+   * throw new PasscodeIncorrectError("https://open.kakao.com/o/xxxx");
+   */
+  constructor(link: string) {
+    super(`Passcode was rejected for open chat ${link}`);
+    this.name = "PasscodeIncorrectError";
+    this.link = link;
+  }
+}
+
+/**
  * Options for joining an open chat.
  */
 export interface JoinOptions {
@@ -81,6 +158,8 @@ export interface JoinOptions {
   link: string;
   /** The exact profile name to enter with, as shown in the join profile sheet. */
   profile: string;
+  /** The chatroom code, for a passcode-protected room (ASCII). */
+  passcode?: string;
   /** Per-step timeout override, in milliseconds. */
   timeoutMs?: number;
 }
@@ -166,15 +245,18 @@ export class OpenChat {
    * exclusively so no other queued operation touches the screen meanwhile.
    *
    * @async
-   * @param {JoinOptions} options - The link, the profile to enter with, and an optional timeout.
+   * @param {JoinOptions} options - The link, the profile to enter with, an optional passcode, and an optional timeout.
    * @returns {Promise<JoinResult>} The joined room's title.
    * @throws {ProfileUnavailableError} If the requested profile is not in the join sheet.
+   * @throws {PasscodeRequiredError} If the room needs a passcode and none was given.
+   * @throws {PasscodeIncorrectError} If the supplied passcode is rejected.
    * @throws {Error} If a step's element never appears (e.g. the room could not be opened).
    *
    * @example
    * const { title } = await openChat.join({
    *   link: "https://open.kakao.com/o/gZX6QKNi",
    *   profile: ".",
+   *   passcode: "1234",
    * });
    */
   async join(options: JoinOptions): Promise<JoinResult> {
@@ -183,6 +265,7 @@ export class OpenChat {
     return this.device.exclusive(async () => {
       await this.open(link);
       await this.screen.tap({ id: JOIN_BUTTON_ID }, { timeoutMs });
+      await this.enterPasscodeIfPrompted(link, options.passcode, timeoutMs);
       await this.screen.waitFor({ text: PROFILE_SHEET_TITLE }, { timeoutMs });
       const row = await this.screen.find({ id: PROFILE_NAME_ID, text: profile });
       if (!row) {
@@ -193,6 +276,53 @@ export class OpenChat {
       const title = findNode(await this.screen.dump(), { id: CHATROOM_TITLE_ID });
       return { title: title?.contentDesc ?? "" };
     });
+  }
+
+  /**
+   * Handles the passcode dialog that some rooms show after "Join Open Chat".
+   *
+   * After tapping join, a passcode dialog appears before the profile sheet for a
+   * protected room, or the profile sheet appears directly otherwise. This waits to see
+   * which, and when the passcode dialog is shown enters the code and confirms. A missing
+   * code, or a rejected one, raises a specific error rather than stalling on the profile
+   * wait that follows.
+   *
+   * @async
+   * @param {string} link - The open chat link, for error context.
+   * @param {string | undefined} passcode - The chatroom code, or undefined if none was supplied.
+   * @param {number} timeoutMs - Per-step timeout for the dialog interactions.
+   * @returns {Promise<void>} Resolves once any passcode step is complete.
+   * @throws {PasscodeRequiredError} If a passcode is required but was not supplied.
+   * @throws {PasscodeIncorrectError} If the supplied passcode is rejected.
+   *
+   * @example
+   * await this.enterPasscodeIfPrompted(link, "1234", 15000);
+   */
+  private async enterPasscodeIfPrompted(
+    link: string,
+    passcode: string | undefined,
+    timeoutMs: number,
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const nodes = await this.screen.dump();
+      if (findNode(nodes, { text: PASSCODE_TITLE })) break;
+      if (findNode(nodes, { text: PROFILE_SHEET_TITLE })) return;
+      if (Date.now() >= deadline) return;
+      await sleep(400);
+    }
+    if (passcode === undefined) {
+      throw new PasscodeRequiredError(link);
+    }
+    const field = await this.screen.waitFor({ id: PASSCODE_FIELD_ID }, { timeoutMs });
+    await this.device.tap(field.center.x, field.center.y);
+    await this.device.inputText(passcode);
+    await this.screen.tap({ text: PASSCODE_DONE_TEXT }, { timeoutMs });
+    try {
+      await this.screen.waitFor({ text: PROFILE_SHEET_TITLE }, { timeoutMs: PASSCODE_RESULT_MS });
+    } catch {
+      throw new PasscodeIncorrectError(link);
+    }
   }
 
   /**

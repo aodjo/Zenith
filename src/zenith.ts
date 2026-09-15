@@ -36,6 +36,8 @@ export interface ZenithOptions {
 export interface ZenithJoinOptions {
   /** The open profile to enter with; falls back to the client's `defaultProfile`. */
   profile?: string;
+  /** The chatroom code, for a passcode-protected room. */
+  passcode?: string;
   /** Per-step timeout override, in milliseconds. */
   timeoutMs?: number;
 }
@@ -203,38 +205,39 @@ export class Zenith {
     if (profile === undefined) {
       throw new Error("join needs a profile: pass { profile } or set defaultProfile");
     }
-    return this.openChat.join(
-      options.timeoutMs !== undefined ? { link, profile, timeoutMs: options.timeoutMs } : { link, profile },
-    );
+    return this.openChat.join({
+      link,
+      profile,
+      ...(options.passcode !== undefined ? { passcode: options.passcode } : {}),
+      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    });
   }
 
   /**
-   * Resolves a leave/send target into an open chat link the app can open.
+   * Resolves a chat room id to the open chat link the app can open.
    *
-   * A target that is not all-digits is already a link URL or bare code and is returned
-   * unchanged. An all-digit target is treated as a chat room id and looked up among the
-   * joined rooms to find its link, since opening a joined room by id is unreliable while
-   * opening by link is deterministic.
+   * Verifies the room is an open chat, then looks it up among the joined rooms to find its
+   * link, since opening a joined room by id directly is unreliable while opening by link
+   * is deterministic.
    *
    * @async
-   * @param {string | number} target - An open chat link, a bare code, or a chat room id.
-   * @returns {Promise<string>} A link or code accepted by the open-chat opener.
-   * @throws {NotOpenChatError} If a chat-id target is a regular (non-open) chat.
-   * @throws {Error} If a chat-id target has no joined room with a resolvable link.
+   * @param {string | number} chatId - The chat room id.
+   * @returns {Promise<string>} The room's link or code.
+   * @throws {NotOpenChatError} If the room is a regular (non-open) chat.
+   * @throws {Error} If the room has no joined entry with a resolvable link.
    *
    * @example
-   * await zenith.resolveRoomLink("18474375066224479"); // -> the room's link
+   * await zenith.linkForRoomId("18474375066224479"); // -> the room's link
    */
-  private async resolveRoomLink(target: string | number): Promise<string> {
-    const value = String(target);
-    if (!/^\d+$/.test(value)) return value;
-    const type = await this.db.roomType(value);
+  private async linkForRoomId(chatId: string | number): Promise<string> {
+    const id = String(chatId);
+    const type = await this.db.roomType(id);
     if (type !== undefined && !isOpenChatType(type)) {
-      throw new NotOpenChatError(value, type);
+      throw new NotOpenChatError(id, type);
     }
-    const room = (await this.db.listJoinedRooms()).find((r) => r.chatId === value);
+    const room = (await this.db.listJoinedRooms()).find((r) => r.chatId === id);
     const link = room?.url ?? room?.code;
-    if (!link) throw new Error(`no open chat link found for chat id ${value}`);
+    if (!link) throw new Error(`no open chat link found for chat id ${id}`);
     return link;
   }
 
@@ -252,23 +255,53 @@ export class Zenith {
   }
 
   /**
-   * Leaves an open chat, identified by its link, bare code, or chat room id.
-   *
-   * A chat room id (all digits) is resolved to the room's link via the joined-room list;
-   * a link or code is used directly.
+   * Leaves an open chat by its full link URL.
    *
    * @async
-   * @param {string | number} target - The open chat link, code, or chat room id to leave.
+   * @param {string} link - The open chat link (e.g. `https://open.kakao.com/o/xxxx`).
    * @param {number} [timeoutMs] - Per-step timeout override, in milliseconds.
    * @returns {Promise<void>} Resolves once the leave is confirmed.
-   * @throws {Error} If a chat-id target has no joined room with a resolvable link.
    *
    * @example
-   * await zenith.leave("https://open.kakao.com/o/xxxx");
-   * await zenith.leave("18474375066224479"); // by chat room id
+   * await zenith.leaveByLink("https://open.kakao.com/o/gZX6QKNi");
    */
-  async leave(target: string | number, timeoutMs?: number): Promise<void> {
-    const link = await this.resolveRoomLink(target);
+  async leaveByLink(link: string, timeoutMs?: number): Promise<void> {
+    return timeoutMs !== undefined ? this.openChat.leave(link, timeoutMs) : this.openChat.leave(link);
+  }
+
+  /**
+   * Leaves an open chat by its bare link code.
+   *
+   * @async
+   * @param {string} code - The open chat code (the `<code>` in `/o/<code>`).
+   * @param {number} [timeoutMs] - Per-step timeout override, in milliseconds.
+   * @returns {Promise<void>} Resolves once the leave is confirmed.
+   *
+   * @example
+   * await zenith.leaveByCode("gZX6QKNi");
+   */
+  async leaveByCode(code: string, timeoutMs?: number): Promise<void> {
+    return timeoutMs !== undefined ? this.openChat.leave(code, timeoutMs) : this.openChat.leave(code);
+  }
+
+  /**
+   * Leaves an open chat by its chat room id.
+   *
+   * Verifies the room is an open chat and resolves it to a link first; a regular chat is
+   * rejected rather than acted on.
+   *
+   * @async
+   * @param {string | number} chatId - The chat room id to leave.
+   * @param {number} [timeoutMs] - Per-step timeout override, in milliseconds.
+   * @returns {Promise<void>} Resolves once the leave is confirmed.
+   * @throws {NotOpenChatError} If the room is a regular (non-open) chat.
+   * @throws {Error} If the room has no joined entry with a resolvable link.
+   *
+   * @example
+   * await zenith.leaveByRoomID("18474375066224479");
+   */
+  async leaveByRoomID(chatId: string | number, timeoutMs?: number): Promise<void> {
+    const link = await this.linkForRoomId(chatId);
     return timeoutMs !== undefined ? this.openChat.leave(link, timeoutMs) : this.openChat.leave(link);
   }
 
