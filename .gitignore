@@ -8,3 +8,7 @@ coverage/
 
 # local Claude Code instructions (not shared)
 CLAUDE.md
+
+# local debugging CLI (not shared)
+dump.js
+dump-*.png
