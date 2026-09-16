@@ -1,7 +1,7 @@
 import { Device, type DeviceOptions } from "./device/index.js";
 import { Screen } from "./ui/index.js";
 import { OpenChat, type JoinResult } from "./openchat/index.js";
-import { Sender } from "./send/index.js";
+import { Sender, RemoteReplySender } from "./send/index.js";
 import {
   KakaoDb,
   NotOpenChatError,
@@ -86,6 +86,7 @@ export class Zenith {
   readonly screen: Screen;
   private readonly openChat: OpenChat;
   private readonly sender: Sender;
+  private readonly remoteSender: RemoteReplySender;
   private readonly defaultProfile: string | undefined;
 
   /**
@@ -104,6 +105,7 @@ export class Zenith {
     this.screen = new Screen(this.device);
     this.openChat = new OpenChat(this.device);
     this.sender = new Sender(this.device);
+    this.remoteSender = new RemoteReplySender(this.device);
     this.defaultProfile = options.defaultProfile;
   }
 
@@ -317,6 +319,24 @@ export class Zenith {
    */
   send(link: string, text: string): Promise<void> {
     return this.sender.send(link, text);
+  }
+
+  /**
+   * Sends a text message to a joined chat by id, via the notification reply path.
+   *
+   * Faster than {@link Zenith.send} and does not open the chatroom UI: it backgrounds
+   * KakaoTalk and delivers through the notification quick-reply helper. The bot must
+   * already be a member of the room.
+   *
+   * @param {string | number} chatId - The chat room id to send to.
+   * @param {string} text - The message text (Korean supported).
+   * @returns {Promise<void>} Resolves once the message has been sent.
+   *
+   * @example
+   * await zenith.sendToChat("18474375066224479", "안녕하세요");
+   */
+  sendToChat(chatId: string | number, text: string): Promise<void> {
+    return this.remoteSender.send(chatId, text);
   }
 
   /**

@@ -374,7 +374,7 @@ export class Bot {
   }
 
   /**
-   * Builds a reply function bound to a room, sending via the room's cached link.
+   * Builds a reply function bound to a room, sending via the fast notification path.
    *
    * @param {string} chatId - The room to reply to.
    * @returns {(text: string) => Promise<void>} A reply function for that room.
@@ -383,13 +383,7 @@ export class Bot {
    * const reply = this.replyTo("18474375066224479");
    */
   private replyTo(chatId: string): (text: string) => Promise<void> {
-    return async (text: string) => {
-      const link = this.rooms.get(chatId)?.link;
-      if (!link) {
-        throw new Error(`cannot reply: no link cached for room ${chatId}`);
-      }
-      await this.zenith.send(link, text);
-    };
+    return (text: string) => this.zenith.sendToChat(chatId, text);
   }
 
   /**
