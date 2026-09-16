@@ -1,9 +1,13 @@
 import type { Device } from "../device/device.js";
 import { Screen } from "../ui/screen.js";
 import { findNode } from "../ui/selector.js";
+import type { UiNode } from "../ui/hierarchy.js";
 
 /** Default per-step wait, in milliseconds; join includes a possible cold app start. */
 const DEFAULT_TIMEOUT_MS = 15000;
+
+/** Gap between hierarchy polls while advancing through the join screens. */
+const POLL_MS = 300;
 
 /** resource-id of the "Join Open Chat" button on the link preview screen. */
 const JOIN_BUTTON_ID = "join_layout";
@@ -265,63 +269,92 @@ export class OpenChat {
     return this.device.exclusive(async () => {
       await this.open(link);
       await this.screen.tap({ id: JOIN_BUTTON_ID }, { timeoutMs });
-      await this.enterPasscodeIfPrompted(link, options.passcode, timeoutMs);
-      await this.screen.waitFor({ text: PROFILE_SHEET_TITLE }, { timeoutMs });
-      const row = await this.screen.find({ id: PROFILE_NAME_ID, text: profile });
-      if (!row) {
-        throw new ProfileUnavailableError(profile, link);
-      }
+      const row = await this.reachProfileRow(link, profile, options.passcode, timeoutMs);
       await this.device.tap(row.center.x, row.center.y);
-      await this.screen.waitFor({ id: CHATROOM_MARKER_ID }, { timeoutMs });
-      const title = findNode(await this.screen.dump(), { id: CHATROOM_TITLE_ID });
+      const nodes = await this.waitForChatroom(timeoutMs);
+      const title = findNode(nodes, { id: CHATROOM_TITLE_ID });
       return { title: title?.contentDesc ?? "" };
     });
   }
 
   /**
-   * Handles the passcode dialog that some rooms show after "Join Open Chat".
+   * Advances to the profile sheet and returns the requested profile's row.
    *
-   * After tapping join, a passcode dialog appears before the profile sheet for a
-   * protected room, or the profile sheet appears directly otherwise. This waits to see
-   * which, and when the passcode dialog is shown enters the code and confirms. A missing
-   * code, or a rejected one, raises a specific error rather than stalling on the profile
-   * wait that follows.
+   * Polls the screen once per cycle and reuses each dump: it enters the chatroom code
+   * when the passcode dialog appears, and when the profile sheet appears it locates the
+   * requested profile's row in the same hierarchy. Merging these steps removes the extra
+   * UI dumps that dominate join latency.
    *
    * @async
    * @param {string} link - The open chat link, for error context.
-   * @param {string | undefined} passcode - The chatroom code, or undefined if none was supplied.
-   * @param {number} timeoutMs - Per-step timeout for the dialog interactions.
-   * @returns {Promise<void>} Resolves once any passcode step is complete.
-   * @throws {PasscodeRequiredError} If a passcode is required but was not supplied.
+   * @param {string} profile - The profile name to select.
+   * @param {string | undefined} passcode - The chatroom code, if the room needs one.
+   * @param {number} timeoutMs - Overall time to reach the profile sheet.
+   * @returns {Promise<UiNode>} The profile row node to tap.
+   * @throws {ProfileUnavailableError} If the profile is not offered by the room.
+   * @throws {PasscodeRequiredError} If a passcode is required but not supplied.
    * @throws {PasscodeIncorrectError} If the supplied passcode is rejected.
+   * @throws {Error} If the profile sheet is never reached.
    *
    * @example
-   * await this.enterPasscodeIfPrompted(link, "1234", 15000);
+   * const row = await this.reachProfileRow(link, "bot", "1234", 15000);
    */
-  private async enterPasscodeIfPrompted(
+  private async reachProfileRow(
     link: string,
+    profile: string,
     passcode: string | undefined,
     timeoutMs: number,
-  ): Promise<void> {
+  ): Promise<UiNode> {
+    const deadline = Date.now() + timeoutMs;
+    let passcodeEnteredAt = 0;
+    for (;;) {
+      const nodes = await this.screen.dump();
+      if (findNode(nodes, { text: PROFILE_SHEET_TITLE })) {
+        const row = findNode(nodes, { id: PROFILE_NAME_ID, text: profile });
+        if (row) return row;
+        throw new ProfileUnavailableError(profile, link);
+      }
+      if (passcodeEnteredAt === 0 && findNode(nodes, { text: PASSCODE_TITLE })) {
+        if (passcode === undefined) throw new PasscodeRequiredError(link);
+        const field = findNode(nodes, { id: PASSCODE_FIELD_ID });
+        const done = findNode(nodes, { text: PASSCODE_DONE_TEXT });
+        if (field && done) {
+          await this.device.tap(field.center.x, field.center.y);
+          await this.device.inputText(passcode);
+          await this.device.tap(done.center.x, done.center.y);
+          passcodeEnteredAt = Date.now();
+        }
+      } else if (passcodeEnteredAt !== 0 && Date.now() - passcodeEnteredAt > PASSCODE_RESULT_MS) {
+        throw new PasscodeIncorrectError(link);
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`join: profile sheet not reached for ${link}`);
+      }
+      await sleep(POLL_MS);
+    }
+  }
+
+  /**
+   * Waits for the chatroom to load and returns its full hierarchy.
+   *
+   * Returns the node list so the caller can read the room title from the same dump that
+   * detected the chatroom, avoiding an extra UI dump.
+   *
+   * @async
+   * @param {number} timeoutMs - How long to wait for the chatroom.
+   * @returns {Promise<UiNode[]>} The chatroom's nodes.
+   * @throws {Error} If the chatroom does not load in time.
+   *
+   * @example
+   * const nodes = await this.waitForChatroom(15000);
+   */
+  private async waitForChatroom(timeoutMs: number): Promise<UiNode[]> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const nodes = await this.screen.dump();
-      if (findNode(nodes, { text: PASSCODE_TITLE })) break;
-      if (findNode(nodes, { text: PROFILE_SHEET_TITLE })) return;
-      if (Date.now() >= deadline) return;
-      await sleep(400);
-    }
-    if (passcode === undefined) {
-      throw new PasscodeRequiredError(link);
-    }
-    const field = await this.screen.waitFor({ id: PASSCODE_FIELD_ID }, { timeoutMs });
-    await this.device.tap(field.center.x, field.center.y);
-    await this.device.inputText(passcode);
-    await this.screen.tap({ text: PASSCODE_DONE_TEXT }, { timeoutMs });
-    try {
-      await this.screen.waitFor({ text: PROFILE_SHEET_TITLE }, { timeoutMs: PASSCODE_RESULT_MS });
-    } catch {
-      throw new PasscodeIncorrectError(link);
+      if (findNode(nodes, { id: CHATROOM_MARKER_ID })) return nodes;
+      if (Date.now() >= deadline) throw new Error("join: chatroom did not load");
+      await sleep(POLL_MS);
     }
   }
 

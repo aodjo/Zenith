@@ -10,9 +10,6 @@ const DEFAULT_ADB = "adb";
 /** Upper bound on bytes buffered from one adb invocation; screenshots run a few MB. */
 const MAX_BUFFER = 64 * 1024 * 1024;
 
-/** On-device path used to stage the UI hierarchy dump before reading it back. */
-const UI_DUMP_PATH = "/sdcard/zenith_ui.xml";
-
 /**
  * Options controlling how a {@link Device} shells out to adb.
  */
@@ -211,9 +208,9 @@ export class Device {
   /**
    * Dumps the current window's UI hierarchy as uiautomator XML.
    *
-   * Writes the hierarchy to a staging file on the device, then reads it back, because
-   * `uiautomator dump` prints only a status line to stdout. The returned XML is the
-   * input to {@link parseHierarchy}.
+   * Dumps straight to `/dev/tty` so the XML comes back in a single adb round-trip (no
+   * staging file to read back). A trailing status line may follow the XML; it contains no
+   * `<node>` elements and is ignored by {@link parseHierarchy}.
    *
    * @returns {Promise<string>} The uiautomator XML for the foreground window.
    * @throws {Error} If the dump cannot be produced (e.g. the window is mid-animation).
@@ -223,8 +220,7 @@ export class Device {
    * const nodes = parseHierarchy(xml);
    */
   async dumpUi(): Promise<string> {
-    await this.shell("uiautomator", "dump", UI_DUMP_PATH);
-    const xml = await this.execOut("cat", UI_DUMP_PATH);
-    return xml.toString("utf8");
+    const out = await this.execOut("uiautomator", "dump", "/dev/tty");
+    return out.toString("utf8");
   }
 }
