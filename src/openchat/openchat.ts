@@ -52,6 +52,15 @@ const PASSCODE_DONE_TEXT = "Done";
 const PASSCODE_RESULT_MS = 8000;
 
 /**
+ * Android KEYCODE_HOME. Pressed right after a join to send KakaoTalk to the background.
+ * KakaoTalk raises no notification for a room it is foregrounded on, so a freshly joined
+ * room left in the foreground never populates a NotificationReferer — and the RemoteInput
+ * reply path has no referer to send under. Backgrounding restores normal notifications so
+ * the room's later messages can be replied to.
+ */
+const KEYCODE_HOME = 3;
+
+/**
  * Pauses for a number of milliseconds.
  *
  * @param {number} ms - How long to sleep.
@@ -304,6 +313,8 @@ export class OpenChat {
       await this.device.tap(row.center.x, row.center.y);
       const nodes = await this.waitForChatroom(timeoutMs);
       const title = findNode(nodes, { id: CHATROOM_TITLE_ID });
+      // Leave the app backgrounded so this room's later messages arrive as notifications.
+      await this.device.key(KEYCODE_HOME);
       return { title: title?.contentDesc ?? "" };
     });
   }
