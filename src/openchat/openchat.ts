@@ -155,6 +155,36 @@ export class PasscodeIncorrectError extends Error {
 }
 
 /**
+ * Thrown when a join is attempted for a room the bot is already in.
+ *
+ * Opening the link lands in the chatroom rather than the preview, so there is nothing to
+ * join. Callers that re-issue joins (e.g. re-verification) should treat this as "already
+ * present" rather than a failure.
+ *
+ * @example
+ * try { await openChat.join({ link, profile }); }
+ * catch (e) { const alreadyIn = e instanceof AlreadyJoinedError; }
+ */
+export class AlreadyJoinedError extends Error {
+  /** The open chat link that was already joined. */
+  readonly link: string;
+
+  /**
+   * Builds the error from the link that was already joined.
+   *
+   * @param {string} link - The open chat link.
+   *
+   * @example
+   * throw new AlreadyJoinedError("https://open.kakao.com/o/xxxx");
+   */
+  constructor(link: string) {
+    super(`Already joined open chat ${link}`);
+    this.name = "AlreadyJoinedError";
+    this.link = link;
+  }
+}
+
+/**
  * Options for joining an open chat.
  */
 export interface JoinOptions {
@@ -268,13 +298,47 @@ export class OpenChat {
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     return this.device.exclusive(async () => {
       await this.open(link);
-      await this.screen.tap({ id: JOIN_BUTTON_ID }, { timeoutMs });
+      const joinButton = await this.detectJoinScreen(link, timeoutMs);
+      await this.device.tap(joinButton.center.x, joinButton.center.y);
       const row = await this.reachProfileRow(link, profile, options.passcode, timeoutMs);
       await this.device.tap(row.center.x, row.center.y);
       const nodes = await this.waitForChatroom(timeoutMs);
       const title = findNode(nodes, { id: CHATROOM_TITLE_ID });
       return { title: title?.contentDesc ?? "" };
     });
+  }
+
+  /**
+   * Waits for the link preview and returns its "Join Open Chat" button.
+   *
+   * If the bot is already a member, opening the link lands in the chatroom instead of the
+   * preview; this detects that and throws {@link AlreadyJoinedError} rather than waiting
+   * out the timeout for a join button that will never appear.
+   *
+   * @async
+   * @param {string} link - The open chat link, for error context.
+   * @param {number} timeoutMs - How long to wait for the preview.
+   * @returns {Promise<UiNode>} The join button node to tap.
+   * @throws {AlreadyJoinedError} If the bot is already in the room.
+   * @throws {Error} If neither the preview nor the chatroom appears in time.
+   *
+   * @example
+   * const joinButton = await this.detectJoinScreen(link, 15000);
+   */
+  private async detectJoinScreen(link: string, timeoutMs: number): Promise<UiNode> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const nodes = await this.screen.dump();
+      if (findNode(nodes, { id: CHATROOM_MARKER_ID })) {
+        throw new AlreadyJoinedError(link);
+      }
+      const joinButton = findNode(nodes, { id: JOIN_BUTTON_ID });
+      if (joinButton) return joinButton;
+      if (Date.now() >= deadline) {
+        throw new Error(`join: link preview not reached for ${link}`);
+      }
+      await sleep(POLL_MS);
+    }
   }
 
   /**
